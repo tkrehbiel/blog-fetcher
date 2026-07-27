@@ -1,4 +1,4 @@
-.PHONY: blaugust test install help
+.PHONY: blaugust build test install help
 
 help:
 	@echo "Available targets:"
@@ -13,3 +13,7 @@ test:
 
 blaugust:
 	python3 blog_fetcher.py --opml https://godless-internets.org/blaugust-2026.opml --since 2026-07-01 --format html --output report.html --cache blaugust2026_cache.json
+
+build:
+	mkdir -p public
+	python3 blog_fetcher.py --opml https://godless-internets.org/blaugust-2026.opml --since 2026-07-01 --format html --output public/index.html --cache blaugust2026_cache.json

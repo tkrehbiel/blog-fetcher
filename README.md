@@ -86,3 +86,22 @@ Outputs a neat GFM table:
 | [Endgame Viable](https://endgameviable.com/) | **20** | ✅ 200 Refreshed | 2026-07-27 07:38:00 |
 | [Daring Fireball](https://daringfireball.net/) | **38** | ✅ 200 Refreshed | 2026-07-27 07:38:00 |
 ```
+
+---
+
+## GitHub Pages & GitHub Actions Deployment
+
+You can host this tool as a public feed dashboard using GitHub Pages. It runs automatically in the cloud on a cron schedule to fetch updates, commits the cache changes back to git, and republishes the static site.
+
+### Setup Instructions
+
+1. **Enable GitHub Pages**:
+   - Go to your repository settings on GitHub.
+   - Under **Pages** (under the Code and automation section), set the Build and deployment source to **GitHub Actions**.
+2. **Configure Workflow Permissions**:
+   - Go to **Settings** -> **Actions** -> **General**.
+   - Under **Workflow permissions**, select **Read and write permissions** (this is required to commit updated caching headers back to `main`).
+3. **Commit & Push**:
+   - Push `.github/workflows/deploy.yml` and the updated `Makefile` to your `main` branch.
+   - The initial deploy workflow will trigger automatically on the push. Once completed, your site will be public at `https://<username>.github.io/<repository-name>/`.
+
