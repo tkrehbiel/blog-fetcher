@@ -4,7 +4,6 @@ report.md
 *.html
 *.md
 *.opml
-exclude.yaml
 test_cache.json
 !README.md
 !tests.opml
