@@ -303,6 +303,16 @@ def fetch_all_feeds(feeds, cache, concurrency=15, ignore_ssl=True):
                 }
     return updated_cache
 
+def get_latest_post_timestamp(info):
+    """Finds the timestamp of the latest post in the feed info (0.0 if none)."""
+    latest_dt = None
+    for post in info.get('posts', []):
+        dt = parse_datetime(post.get('pub_date'))
+        if dt:
+            if latest_dt is None or dt > latest_dt:
+                latest_dt = dt
+    return latest_dt.timestamp() if latest_dt else 0.0
+
 def generate_markdown(cache, since_dt, last_run_dt=None):
     """Generates a Markdown/GFM report detailing new posts since given date."""
     lines = []
@@ -323,8 +333,11 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
     updated_today_count = 0
     new_posts_today_count = 0
     
-    # Process each feed in alphabetical order of titles
-    sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
+    # Process each feed sorted by latest update date descending, then alphabetically by title
+    sorted_feeds = sorted(
+        cache.items(),
+        key=lambda x: (-get_latest_post_timestamp(x[1]), x[1]['title'].lower())
+    )
     for xml_url, info in sorted_feeds:
         title = info['title']
         html_url = info['html_url']
@@ -418,9 +431,11 @@ def generate_html(cache, since_dt, last_run_dt=None):
     updated_today_count = 0
     new_posts_today_count = 0
     
-    sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
+    sorted_feeds = sorted(
+        cache.items(),
+        key=lambda x: (-get_latest_post_timestamp(x[1]), x[1]['title'].lower())
+    )
     table_rows = []
-    detail_blocks = []
     
     for xml_url, info in sorted_feeds:
         title = info['title']
@@ -469,10 +484,6 @@ def generate_html(cache, since_dt, last_run_dt=None):
             status_text = f"HTTP {status_code}"
             status_title = ""
 
-        # Prepare Table Row
-        blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link">{title}</a>' if html_url else title
-        badge_class = "badge-update" if post_count > 0 else "badge-none"
-        
         # Find latest post publication date
         latest_pub_dt = None
         for post in info.get('posts', []):
@@ -482,15 +493,29 @@ def generate_html(cache, since_dt, last_run_dt=None):
                     latest_pub_dt = dt
         last_update_str = latest_pub_dt.strftime('%Y-%m-%d %H:%M:%S') if latest_pub_dt else 'Never'
         
-        row_id = f"row-{hash(xml_url) & 0xffffffff}"
-        
-        # Count posts today for this specific feed
-        feed_today_count = 0
+        # Find today's posts for this specific feed
+        today_posts = []
         for post in info.get('posts', []):
             dt = parse_datetime(post.get('pub_date'))
             if dt and dt >= today_start:
-                feed_today_count += 1
+                today_posts.append(post)
 
+        feed_today_count = len(today_posts)
+        has_today = "true" if feed_today_count > 0 else "false"
+
+        # Prepare Blog Column HTML
+        if html_url:
+            blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link toggle-posts" data-has-today="{has_today}">{title}</a>'
+        else:
+            blog_link_html = title
+
+        if feed_today_count > 0:
+            collapsible_items = []
+            for p in today_posts:
+                collapsible_items.append(f'<li><a href="{p["link"]}" target="_blank">{p["title"]}</a></li>')
+            blog_link_html += f'<div class="today-posts-collapsible" style="display: none;"><ul class="today-posts-list">{"".join(collapsible_items)}</ul></div>'
+
+        badge_class = "badge-update" if post_count > 0 else "badge-none"
         new_badge_html = f' <span class="badge badge-new">+{feed_today_count} new</span>' if feed_today_count > 0 else ""
 
         table_rows.append(f"""
@@ -501,35 +526,6 @@ def generate_html(cache, since_dt, last_run_dt=None):
             <td class="text-muted">{last_update_str}</td>
         </tr>
         """)
-        
-        # Prepare Detailed Blocks
-        if post_count > 0:
-            post_items_html = []
-            for post in new_posts:
-                p_dt = parse_datetime(post.get('pub_date'))
-                date_str = p_dt.strftime('%b %d, %Y') if p_dt else 'Unknown Date'
-                post_items_html.append(f"""
-                <li class="post-item">
-                    <a href="{post['link']}" target="_blank" class="post-title-link">{post['title']}</a>
-                    <span class="post-date">{date_str}</span>
-                </li>
-                """)
-            
-            detail_blocks.append(f"""
-            <div class="card detail-card" data-title="{title.lower()}">
-                <div class="card-header">
-                    <h3 class="blog-title">
-                        <a href="{html_url}" target="_blank">{title}</a>
-                        <span class="count-badge">{post_count} updates</span>
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <ul class="posts-list">
-                        {"".join(post_items_html)}
-                    </ul>
-                </div>
-            </div>
-            """)
 
     # Statistics Cards calculation
     total_feeds = len(cache)
@@ -552,9 +548,7 @@ def generate_html(cache, since_dt, last_run_dt=None):
     html_content = html_content.replace("{{total_new_posts}}", str(total_new_posts))
     html_content = html_content.replace("{{new_posts_today_count}}", str(new_posts_today_count))
     html_content = html_content.replace("{{table_rows}}", "".join(table_rows))
-    
-    details_html = "".join(detail_blocks) if detail_blocks else '<div class="card no-data-msg">No updates found for this time period.</div>'
-    html_content = html_content.replace("{{detail_blocks}}", details_html)
+
 
     return html_content
 

@@ -303,88 +303,37 @@
         .status-error { background-color: #ef444420; color: #f87171; }
         .status-unknown { background-color: #6b728020; color: #9ca3af; }
 
-        /* Detailed updates */
-        .details-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
+        /* Collapsible Inline Posts */
+        .today-posts-collapsible {
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background-color: #0f172a50;
+            border-left: 2px solid var(--primary);
+            border-radius: 4px;
         }
 
-        .detail-card .card-header {
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .blog-title {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 1.25rem;
-        }
-
-        .blog-title a {
-            color: var(--text-main);
-            text-decoration: none;
-            transition: color 0.15s;
-        }
-
-        .blog-title a:hover {
-            color: var(--primary);
-        }
-
-        .count-badge {
-            font-size: 0.8rem;
-            background-color: var(--primary);
-            color: white;
-            padding: 0.2rem 0.6rem;
-            border-radius: 12px;
-            font-weight: 600;
-        }
-
-        .posts-list {
+        .today-posts-list {
             list-style: none;
+            margin: 0;
+            padding: 0;
         }
 
-        .post-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.6rem 0;
-            border-bottom: 1px dotted var(--border);
-        }
-
-        .post-item:last-child {
-            border-bottom: none;
-        }
-
-        .post-title-link {
-            color: #cbd5e1;
-            text-decoration: none;
-            font-size: 0.95rem;
-            font-weight: 400;
-            transition: color 0.15s, padding-left 0.15s;
-            max-width: 75%;
+        .today-posts-list li {
+            margin: 0.35rem 0;
+            font-size: 0.9rem;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        .post-title-link:hover {
-            color: var(--primary);
-            padding-left: 4px;
+        .today-posts-list li a {
+            color: #a78bfa;
+            text-decoration: none;
+            transition: color 0.15s;
         }
 
-        .post-date {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-
-        .no-data-msg {
-            text-align: center;
-            padding: 3rem;
-            color: var(--text-muted);
-            font-size: 1.1rem;
+        .today-posts-list li a:hover {
+            color: #c084fc;
         }
     </style>
 </head>
@@ -400,7 +349,7 @@
 
         <section class="stats-grid">
             <div class="card stat-card">
-                <span class="stat-label">Blogs Crawled</span>
+                <span class="stat-label">Blogs Viewed</span>
                 <span class="stat-num highlight-purple">{{total_feeds}}</span>
             </div>
             <div class="card stat-card">
@@ -444,15 +393,6 @@
             </div>
         </section>
 
-        <section class="section-title-wrapper">
-            <h2 class="section-title">
-                Detailed Feed Updates
-            </h2>
-        </section>
-
-        <section class="details-grid" id="detailsGrid">
-            {{detail_blocks}}
-        </section>
     </div>
 
     <script>
@@ -460,14 +400,12 @@
         const btnAll = document.getElementById('btnAll');
         const btnUpdated = document.getElementById('btnUpdated');
         const tableBody = document.getElementById('tableBody');
-        const detailsGrid = document.getElementById('detailsGrid');
 
         let filterMode = 'all'; // 'all' or 'updated'
 
         function updateFilters() {
             const query = searchInput.value.toLowerCase().trim();
             const rows = tableBody.getElementsByTagName('tr');
-            const cards = detailsGrid.getElementsByClassName('detail-card');
             
             // Filter Table Rows
             for (let row of rows) {
@@ -481,38 +419,6 @@
                     row.style.display = '';
                 } else {
                     row.style.display = 'none';
-                }
-            }
-
-            // Filter Detail Cards
-            let visibleCards = 0;
-            for (let card of cards) {
-                const title = card.getAttribute('data-title');
-                const matchesSearch = title.includes(query);
-                
-                if (matchesSearch) {
-                    card.style.display = '';
-                    visibleCards++;
-                } else {
-                    card.style.display = 'none';
-                }
-            }
-            
-            // Handle no detailed updates visible case
-            const noDataMsg = detailsGrid.querySelector('.no-data-msg');
-            if (cards.length > 0) {
-                if (visibleCards === 0) {
-                    if (!noDataMsg) {
-                        const msg = document.createElement('div');
-                        msg.className = 'card no-data-msg';
-                        msg.textContent = 'No updates match your search.';
-                        detailsGrid.appendChild(msg);
-                    } else {
-                        noDataMsg.textContent = 'No updates match your search.';
-                        noDataMsg.style.display = '';
-                    }
-                } else if (noDataMsg) {
-                    noDataMsg.style.display = 'none';
                 }
             }
         }
@@ -531,6 +437,19 @@
             btnAll.classList.remove('active');
             filterMode = 'updated';
             updateFilters();
+        });
+
+        // Toggle collapsible posts lists
+        document.querySelectorAll('.toggle-posts').forEach(link => {
+            if (link.getAttribute('data-has-today') === 'true') {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const collapsible = this.nextElementSibling;
+                    if (collapsible) {
+                        collapsible.style.display = collapsible.style.display === 'none' ? 'block' : 'none';
+                    }
+                });
+            }
         });
     </script>
 </body>
