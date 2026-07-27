@@ -275,6 +275,12 @@
             border: 1px solid #c084fc40;
         }
 
+        .badge-new {
+            background-color: #10b98120;
+            color: #34d399;
+            border: 1px solid #34d39940;
+        }
+
         .badge-none {
             background-color: #47556920;
             color: var(--text-muted);
@@ -386,8 +392,9 @@
         <header>
             <h1>Blog Feed Activity Report</h1>
             <div class="metadata-bar">
-                <span>Since: <strong>{{since_str}}</strong></span>
-                <span>Generated: <strong>{{generated_str}}</strong></span>
+                <span>Counting From: <strong>{{since_str}}</strong></span>
+                <span>Last Run: <strong>{{last_run_str}}</strong></span>
+                <span>Report Generated: <strong>{{generated_str}}</strong></span>
             </div>
         </header>
 

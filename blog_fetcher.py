@@ -130,7 +130,7 @@ def merge_posts(cached_posts, new_posts):
 
 def fetch_single_feed(feed, cache_entry, context=None):
     """
-    Fetches and parses a single feed using feedparser with HTTP Conditional GET.
+    Fetches and parses a single feed (XML or JSON) with HTTP Conditional GET support.
     Returns the updated cache entry representing this feed.
     """
     xml_url = feed['xml_url']
@@ -144,71 +144,105 @@ def fetch_single_feed(feed, cache_entry, context=None):
         'etag': cached_etag,
         'last_modified': cached_last_modified,
         'last_checked': datetime.now(timezone.utc).isoformat(),
-        'status': cache_entry.get('status', 0),
+        'status': 200,
         'posts': cached_posts,
+        'new_posts_count': 0,
         'updated_this_run': False,
         'error_msg': None
     }
 
     try:
-        # Build custom request handlers to support SSL contexts
-        handlers = []
-        if context:
-            handlers.append(urllib.request.HTTPSHandler(context=context))
+        # Build Request with custom headers and conditional GET fields
+        req = urllib.request.Request(xml_url, headers={'User-Agent': USER_AGENT})
+        if cached_etag:
+            req.add_header('If-None-Match', cached_etag)
+        if cached_last_modified:
+            req.add_header('If-Modified-Since', cached_last_modified)
 
-        # Parse the feed with conditional headers and our User-Agent
-        parsed = feedparser.parse(
-            xml_url,
-            etag=cached_etag,
-            modified=cached_last_modified,
-            agent=USER_AGENT,
-            handlers=handlers
-        )
+        # Execute network query
+        status = 200
+        content_bytes = b""
+        response_headers = {}
+        try:
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
+                status = response.status
+                content_bytes = response.read()
+                response_headers = response.info()
+        except urllib.error.HTTPError as e:
+            status = e.code
+            if status != 304:
+                raise e
 
-        status = getattr(parsed, 'status', 200)
         result['status'] = status
-        result['etag'] = getattr(parsed, 'etag', None)
-        result['last_modified'] = getattr(parsed, 'modified', None)
 
         if status == 304:
             # Not Modified: Keep cached values
             pass
         elif status in (200, 301, 302, 307):
             result['updated_this_run'] = True
-            
-            # Map feedparser entries to cache posts format
+            result['etag'] = response_headers.get('ETag')
+            result['last_modified'] = response_headers.get('Last-Modified')
+
+            content_type = response_headers.get('Content-Type', '').lower()
             new_posts = []
-            for entry in getattr(parsed, 'entries', []):
-                title = entry.get('title', 'Untitled Post').strip()
-                link = entry.get('link', '').strip()
-                guid = entry.get('id', link).strip()
-                
-                # Extract date from parsed struct_time first, fallback to raw string
-                pub_dt = None
-                parsed_time = entry.get('published_parsed') or entry.get('updated_parsed')
-                if parsed_time:
-                    try:
-                        pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
-                    except Exception:
-                        pass
-                
-                if not pub_dt:
-                    raw_date = entry.get('published') or entry.get('updated', '')
+
+            if 'json' in content_type or xml_url.endswith('.json'):
+                # Parse as JSON Feed
+                feed_data = json.loads(content_bytes.decode('utf-8', errors='ignore'))
+                items = feed_data.get('items', [])
+                for item in items:
+                    title = item.get('title', 'Untitled Post').strip()
+                    link = item.get('url', '').strip()
+                    guid = item.get('id', link).strip()
+
+                    raw_date = item.get('date_published') or item.get('date_modified', '')
                     pub_dt = parse_datetime(raw_date)
 
-                new_posts.append({
-                    'title': title,
-                    'link': link,
-                    'pub_date': pub_dt.isoformat() if pub_dt else '',
-                    'guid': guid
-                })
+                    new_posts.append({
+                        'title': title,
+                        'link': link,
+                        'pub_date': pub_dt.isoformat() if pub_dt else '',
+                        'guid': guid
+                    })
+            else:
+                # Parse as XML Feed (RSS/Atom)
+                parsed = feedparser.parse(content_bytes)
+                if getattr(parsed, 'bozo_exception', None) and not getattr(parsed, 'entries', None):
+                    raise Exception(f"XML Parsing Error: {parsed.bozo_exception}")
 
-            # Merge with existing cache database
+                for entry in getattr(parsed, 'entries', []):
+                    title = entry.get('title', 'Untitled Post').strip()
+                    link = entry.get('link', '').strip()
+                    guid = entry.get('id', link).strip()
+
+                    pub_dt = None
+                    parsed_time = entry.get('published_parsed') or entry.get('updated_parsed')
+                    if parsed_time:
+                        try:
+                            pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
+                        except Exception:
+                            pass
+
+                    if not pub_dt:
+                        raw_date = entry.get('published') or entry.get('updated', '')
+                        pub_dt = parse_datetime(raw_date)
+
+                    new_posts.append({
+                        'title': title,
+                        'link': link,
+                        'pub_date': pub_dt.isoformat() if pub_dt else '',
+                        'guid': guid
+                    })
+
+            # Merge and deduplicate with existing cache
             result['posts'] = merge_posts(cached_posts, new_posts)
+
+            # Calculate new posts since last run
+            cached_guids = {p.get('guid') or p.get('link') for p in cached_posts}
+            new_since_last_run = [p for p in new_posts if (p.get('guid') or p.get('link')) not in cached_guids]
+            result['new_posts_count'] = len(new_since_last_run)
         else:
             result['error_msg'] = f"HTTP {status}"
-            if getattr(parsed, 'bozo_exception', None):
-                result['error_msg'] += f": {parsed.bozo_exception}"
 
     except Exception as e:
         result['status'] = -1
@@ -269,11 +303,15 @@ def fetch_all_feeds(feeds, cache, concurrency=15, ignore_ssl=True):
                 }
     return updated_cache
 
-def generate_markdown(cache, since_dt):
+def generate_markdown(cache, since_dt, last_run_dt=None):
     """Generates a Markdown/GFM report detailing new posts since given date."""
     lines = []
     lines.append(f"# Blog Feed Activity Report")
     lines.append(f"**Since Date:** `{since_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
+    if last_run_dt:
+        lines.append(f"**Last Run:** `{last_run_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
+    else:
+        lines.append(f"**Last Run:** `Never`  ")
     lines.append(f"**Generated At:** `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`\n")
     
     # Summary Table
@@ -317,7 +355,11 @@ def generate_markdown(cache, since_dt):
             status_str = f"❓ HTTP {status_code}"
             
         blog_link = f"[{title}]({html_url})" if html_url else title
-        lines.append(f"| {blog_link} | **{post_count}** | {status_str} | {last_checked[:19].replace('T', ' ')} |")
+        new_count = info.get('new_posts_count', 0)
+        posts_cell = f"**{post_count}**"
+        if new_count > 0:
+            posts_cell += f" (+{new_count} new)"
+        lines.append(f"| {blog_link} | {posts_cell} | {status_str} | {last_checked[:19].replace('T', ' ')} |")
         
         if post_count > 0:
             blog_details.append((title, html_url, new_posts))
@@ -342,7 +384,7 @@ def generate_markdown(cache, since_dt):
         
     return "\n".join(lines)
 
-def generate_html(cache, since_dt):
+def generate_html(cache, since_dt, last_run_dt=None):
     """Generates a premium, highly-styled HTML report."""
     total_new_posts = 0
     updated_blogs_count = 0
@@ -395,10 +437,13 @@ def generate_html(cache, since_dt):
         
         row_id = f"row-{hash(xml_url) & 0xffffffff}"
         
+        new_count = info.get('new_posts_count', 0)
+        new_badge_html = f' <span class="badge badge-new">+{new_count} new</span>' if new_count > 0 else ""
+
         table_rows.append(f"""
         <tr data-posts-count="{post_count}" data-title="{title.lower()}">
             <td>{blog_link_html}</td>
-            <td><span class="badge {badge_class}">{post_count} posts</span></td>
+            <td><span class="badge {badge_class}">{post_count} posts</span>{new_badge_html}</td>
             <td><span class="status-indicator {status_class}" title="{status_title}">{status_text}</span></td>
             <td class="text-muted">{checked_time}</td>
         </tr>
@@ -447,8 +492,11 @@ def generate_html(cache, since_dt):
         print(f"Error loading HTML template '{template_path}': {e}. Returning error fallback.", file=sys.stderr)
         return f"<html><body><h1>Error loading template: {e}</h1></body></html>"
 
+    last_run_str = last_run_dt.strftime('%Y-%m-%d %H:%M:%S UTC') if last_run_dt else 'Never'
+
     # Do token replacements
     html_content = html_content.replace("{{since_str}}", since_str)
+    html_content = html_content.replace("{{last_run_str}}", last_run_str)
     html_content = html_content.replace("{{generated_str}}", generated_str)
     html_content = html_content.replace("{{total_feeds}}", str(total_feeds))
     html_content = html_content.replace("{{updated_blogs_count}}", str(updated_blogs_count))
@@ -535,11 +583,23 @@ def main():
 
     # Load Cache
     cache = {}
+    last_run_dt = None
     if os.path.exists(args.cache):
         try:
             with open(args.cache, "r", encoding="utf-8") as f:
                 cache = json.load(f)
             print(f"Loaded existing cache database containing {len(cache)} entries.")
+            
+            # Extract last run date from existing cache entries
+            checked_dates = []
+            for entry in cache.values():
+                if isinstance(entry, dict) and 'last_checked' in entry:
+                    try:
+                        checked_dates.append(datetime.fromisoformat(entry['last_checked']))
+                    except Exception:
+                        pass
+            if checked_dates:
+                last_run_dt = max(checked_dates)
         except Exception as e:
             print(f"Warning: Failed to load cache file, starting fresh. Reason: {e}", file=sys.stderr)
 
@@ -568,9 +628,9 @@ def main():
     # Generate and Output Report (only if output file is specified)
     if args.output:
         if args.format == "markdown":
-            report_content = generate_markdown(updated_cache, since_dt)
+            report_content = generate_markdown(updated_cache, since_dt, last_run_dt)
         else:
-            report_content = generate_html(updated_cache, since_dt)
+            report_content = generate_html(updated_cache, since_dt, last_run_dt)
 
         try:
             with open(args.output, "w", encoding="utf-8") as f:
