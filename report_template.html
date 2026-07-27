@@ -303,8 +303,8 @@
         .status-error { background-color: #ef444420; color: #f87171; }
         .status-unknown { background-color: #6b728020; color: #9ca3af; }
 
-        /* Collapsible Inline Posts */
-        .today-posts-collapsible {
+        /* Inline Today's Posts Container */
+        .today-posts-container {
             margin-top: 0.5rem;
             padding: 0.5rem 0.75rem;
             background-color: #0f172a50;
@@ -437,19 +437,6 @@
             btnAll.classList.remove('active');
             filterMode = 'updated';
             updateFilters();
-        });
-
-        // Toggle collapsible posts lists
-        document.querySelectorAll('.toggle-posts').forEach(link => {
-            if (link.getAttribute('data-has-today') === 'true') {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const collapsible = this.nextElementSibling;
-                    if (collapsible) {
-                        collapsible.style.display = collapsible.style.display === 'none' ? 'block' : 'none';
-                    }
-                });
-            }
         });
     </script>
 </body>

@@ -9,7 +9,7 @@ install:
 	pip install -r requirements.txt
 
 test:
-	python3 blog_fetcher.py --opml tests.opml --format markdown --output report.md --cache test_cache.json
+	python3 blog_fetcher.py --opml tests.opml --format html --output report.html --cache test_cache.json
 
 local:
 	python3 blog_fetcher.py --opml https://godless-internets.org/blaugust-2026.opml --since 2026-07-01 --format html --output report.html --cache blaugustlocal2026_cache.json

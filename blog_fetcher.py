@@ -501,11 +501,10 @@ def generate_html(cache, since_dt, last_run_dt=None):
                 today_posts.append(post)
 
         feed_today_count = len(today_posts)
-        has_today = "true" if feed_today_count > 0 else "false"
 
         # Prepare Blog Column HTML
         if html_url:
-            blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link toggle-posts" data-has-today="{has_today}">{title}</a>'
+            blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link">{title}</a>'
         else:
             blog_link_html = title
 
@@ -513,7 +512,7 @@ def generate_html(cache, since_dt, last_run_dt=None):
             collapsible_items = []
             for p in today_posts:
                 collapsible_items.append(f'<li><a href="{p["link"]}" target="_blank">{p["title"]}</a></li>')
-            blog_link_html += f'<div class="today-posts-collapsible" style="display: none;"><ul class="today-posts-list">{"".join(collapsible_items)}</ul></div>'
+            blog_link_html += f'<div class="today-posts-container"><ul class="today-posts-list">{"".join(collapsible_items)}</ul></div>'
 
         badge_class = "badge-update" if post_count > 0 else "badge-none"
         new_badge_html = f' <span class="badge badge-new">+{feed_today_count} new</span>' if feed_today_count > 0 else ""
