@@ -390,7 +390,7 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
             blog_details.append((title, html_url, new_posts))
             
     lines.append("")
-    lines.append(f"**Stats Summary:** Checked {len(cache)} feeds. **{total_new_posts}** total posts. Today: **{updated_today_count}** updated blogs, **{new_posts_today_count}** new posts.\n")
+    lines.append(f"**Stats Summary:** Checked {len(cache)} feeds. **{total_new_posts}** total posts. Today: **{new_posts_today_count}** new posts.\n")
     
     # Detailed posts list
     if blog_details:
@@ -550,7 +550,6 @@ def generate_html(cache, since_dt, last_run_dt=None):
     html_content = html_content.replace("{{generated_str}}", generated_str)
     html_content = html_content.replace("{{total_feeds}}", str(total_feeds))
     html_content = html_content.replace("{{total_new_posts}}", str(total_new_posts))
-    html_content = html_content.replace("{{updated_today_count}}", str(updated_today_count))
     html_content = html_content.replace("{{new_posts_today_count}}", str(new_posts_today_count))
     html_content = html_content.replace("{{table_rows}}", "".join(table_rows))
     
