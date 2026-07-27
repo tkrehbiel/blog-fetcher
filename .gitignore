@@ -4,7 +4,9 @@ report.md
 *.html
 *.md
 *.opml
+*.json
 test_cache.json
 !README.md
 !tests.opml
 !report_template.html
+!blaugust2026_cache.json

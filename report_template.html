@@ -112,6 +112,7 @@
         .stat-num.highlight-green { color: var(--success); }
         .stat-num.highlight-purple { color: var(--primary); }
         .stat-num.highlight-indigo { color: var(--secondary); }
+        .stat-num.highlight-blue { color: #38bdf8; }
 
         .stat-label {
             font-size: 0.9rem;
@@ -393,7 +394,6 @@
             <h1>Blog Feed Activity Report</h1>
             <div class="metadata-bar">
                 <span>Counting From: <strong>{{since_str}}</strong></span>
-                <span>Last Run: <strong>{{last_run_str}}</strong></span>
                 <span>Report Generated: <strong>{{generated_str}}</strong></span>
             </div>
         </header>
@@ -404,12 +404,16 @@
                 <span class="stat-num highlight-purple">{{total_feeds}}</span>
             </div>
             <div class="card stat-card">
-                <span class="stat-label">Blogs with Updates</span>
-                <span class="stat-num highlight-indigo">{{updated_blogs_count}}</span>
+                <span class="stat-label">Total Posts</span>
+                <span class="stat-num highlight-green">{{total_new_posts}}</span>
             </div>
             <div class="card stat-card">
-                <span class="stat-label">Total New Posts</span>
-                <span class="stat-num highlight-green">{{total_new_posts}}</span>
+                <span class="stat-label">Updated Blogs Today</span>
+                <span class="stat-num highlight-indigo">{{updated_today_count}}</span>
+            </div>
+            <div class="card stat-card">
+                <span class="stat-label">New Posts Today</span>
+                <span class="stat-num highlight-blue">{{new_posts_today_count}}</span>
             </div>
         </section>
 
@@ -432,9 +436,9 @@
                     <thead>
                         <tr>
                             <th>Blog</th>
-                            <th>New Posts</th>
+                            <th>Posts</th>
                             <th>Fetch Status</th>
-                            <th>Last Checked</th>
+                            <th>Last Update</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">

@@ -308,20 +308,20 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
     lines = []
     lines.append(f"# Blog Feed Activity Report")
     lines.append(f"**Since Date:** `{since_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
-    if last_run_dt:
-        lines.append(f"**Last Run:** `{last_run_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
-    else:
-        lines.append(f"**Last Run:** `Never`  ")
     lines.append(f"**Generated At:** `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`\n")
     
     # Summary Table
     lines.append("## Feed Activity Summary\n")
-    lines.append("| Blog Title | Posts | Status | Last Checked |")
+    lines.append("| Blog Title | Posts | Status | Last Update |")
     lines.append("| :--- | :---: | :---: | :--- |")
     
     blog_details = []
     total_new_posts = 0
     updated_blogs_count = 0
+    
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    updated_today_count = 0
+    new_posts_today_count = 0
     
     # Process each feed in alphabetical order of titles
     sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
@@ -344,6 +344,16 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
         if post_count > 0:
             updated_blogs_count += 1
 
+        # Count today's updates
+        has_post_today = False
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= today_start:
+                new_posts_today_count += 1
+                has_post_today = True
+        if has_post_today:
+            updated_today_count += 1
+
         # Format status indicator
         if error:
             status_str = f"❌ Error ({status_code})"
@@ -355,17 +365,32 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
             status_str = f"❓ HTTP {status_code}"
             
         blog_link = f"[{title}]({html_url})" if html_url else title
-        new_count = info.get('new_posts_count', 0)
+        # Count posts today for this specific feed
+        feed_today_count = 0
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= today_start:
+                feed_today_count += 1
+
         posts_cell = f"**{post_count}**"
-        if new_count > 0:
-            posts_cell += f" (+{new_count} new)"
-        lines.append(f"| {blog_link} | {posts_cell} | {status_str} | {last_checked[:19].replace('T', ' ')} |")
+        if feed_today_count > 0:
+            posts_cell += f" (+{feed_today_count} new)"
+        # Find latest post publication date
+        latest_pub_dt = None
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt:
+                if latest_pub_dt is None or dt > latest_pub_dt:
+                    latest_pub_dt = dt
+        last_update_str = latest_pub_dt.strftime('%Y-%m-%d %H:%M:%S') if latest_pub_dt else 'Never'
+
+        lines.append(f"| {blog_link} | {posts_cell} | {status_str} | {last_update_str} |")
         
         if post_count > 0:
             blog_details.append((title, html_url, new_posts))
             
     lines.append("")
-    lines.append(f"**Stats Summary:** Checked {len(cache)} feeds. **{updated_blogs_count}** had updates. Found **{total_new_posts}** new posts.\n")
+    lines.append(f"**Stats Summary:** Checked {len(cache)} feeds. **{total_new_posts}** total posts. Today: **{updated_today_count}** updated blogs, **{new_posts_today_count}** new posts.\n")
     
     # Detailed posts list
     if blog_details:
@@ -389,6 +414,10 @@ def generate_html(cache, since_dt, last_run_dt=None):
     total_new_posts = 0
     updated_blogs_count = 0
     
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    updated_today_count = 0
+    new_posts_today_count = 0
+    
     sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
     table_rows = []
     detail_blocks = []
@@ -411,6 +440,16 @@ def generate_html(cache, since_dt, last_run_dt=None):
         total_new_posts += post_count
         if post_count > 0:
             updated_blogs_count += 1
+
+        # Count today's updates
+        has_post_today = False
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= today_start:
+                new_posts_today_count += 1
+                has_post_today = True
+        if has_post_today:
+            updated_today_count += 1
             
         # Status styling classes
         if error:
@@ -433,19 +472,33 @@ def generate_html(cache, since_dt, last_run_dt=None):
         # Prepare Table Row
         blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link">{title}</a>' if html_url else title
         badge_class = "badge-update" if post_count > 0 else "badge-none"
-        checked_time = last_checked[:19].replace('T', ' ')
+        
+        # Find latest post publication date
+        latest_pub_dt = None
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt:
+                if latest_pub_dt is None or dt > latest_pub_dt:
+                    latest_pub_dt = dt
+        last_update_str = latest_pub_dt.strftime('%Y-%m-%d %H:%M:%S') if latest_pub_dt else 'Never'
         
         row_id = f"row-{hash(xml_url) & 0xffffffff}"
         
-        new_count = info.get('new_posts_count', 0)
-        new_badge_html = f' <span class="badge badge-new">+{new_count} new</span>' if new_count > 0 else ""
+        # Count posts today for this specific feed
+        feed_today_count = 0
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= today_start:
+                feed_today_count += 1
+
+        new_badge_html = f' <span class="badge badge-new">+{feed_today_count} new</span>' if feed_today_count > 0 else ""
 
         table_rows.append(f"""
         <tr data-posts-count="{post_count}" data-title="{title.lower()}">
             <td>{blog_link_html}</td>
             <td><span class="badge {badge_class}">{post_count} posts</span>{new_badge_html}</td>
             <td><span class="status-indicator {status_class}" title="{status_title}">{status_text}</span></td>
-            <td class="text-muted">{checked_time}</td>
+            <td class="text-muted">{last_update_str}</td>
         </tr>
         """)
         
@@ -492,15 +545,13 @@ def generate_html(cache, since_dt, last_run_dt=None):
         print(f"Error loading HTML template '{template_path}': {e}. Returning error fallback.", file=sys.stderr)
         return f"<html><body><h1>Error loading template: {e}</h1></body></html>"
 
-    last_run_str = last_run_dt.strftime('%Y-%m-%d %H:%M:%S UTC') if last_run_dt else 'Never'
-
     # Do token replacements
     html_content = html_content.replace("{{since_str}}", since_str)
-    html_content = html_content.replace("{{last_run_str}}", last_run_str)
     html_content = html_content.replace("{{generated_str}}", generated_str)
     html_content = html_content.replace("{{total_feeds}}", str(total_feeds))
-    html_content = html_content.replace("{{updated_blogs_count}}", str(updated_blogs_count))
     html_content = html_content.replace("{{total_new_posts}}", str(total_new_posts))
+    html_content = html_content.replace("{{updated_today_count}}", str(updated_today_count))
+    html_content = html_content.replace("{{new_posts_today_count}}", str(new_posts_today_count))
     html_content = html_content.replace("{{table_rows}}", "".join(table_rows))
     
     details_html = "".join(detail_blocks) if detail_blocks else '<div class="card no-data-msg">No updates found for this time period.</div>'
