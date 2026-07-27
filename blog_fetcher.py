@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""
+Blog Feed Tracker
+Fetches RSS, Atom, and JSON feeds from an OPML file or URL,
+caches them using HTTP Conditional GET, and generates activity reports.
+"""
+
+import argparse
+import concurrent.futures
+import json
+import os
+import socket
+import ssl
+import sys
+import urllib.request
+
+# Set default timeout for all socket connections (including feedparser)
+socket.setdefaulttimeout(10)
+import urllib.error
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+import email.utils
+import yaml
+
+# Default files
+DEFAULT_OPML = os.path.join(os.path.dirname(__file__), "tests.opml")
+DEFAULT_CACHE = os.path.join(os.path.dirname(__file__), "feed_cache.json")
+DEFAULT_EXCLUDE = os.path.join(os.path.dirname(__file__), "exclude.yaml")
+USER_AGENT = "Endgame Viable's Blog Fetcher/1.0 (Python) (https://endgameviable.com/page/blog-fetcher/)"
+
+import feedparser
+
+def parse_datetime(date_str):
+    """
+    Robust datetime parsing to handle RFC 822 (RSS) and ISO 8601 (Atom/JSON).
+    Normalizes the output to a timezone-aware UTC datetime.
+    """
+    if not date_str:
+        return None
+    date_str = date_str.strip()
+
+    # 1. Try RFC 822 (RSS format: "Sun, 26 Jul 2026 15:57:44 GMT")
+    try:
+        dt = email.utils.parsedate_to_datetime(date_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+
+    # 2. Try ISO 8601 (Atom / JSON Feed: "2026-07-26T15:57:44Z" or "2026-07-26T15:57:44.123-04:00")
+    try:
+        val = date_str
+        if val.endswith('Z'):
+            val = val[:-1] + '+00:00'
+        dt = datetime.fromisoformat(val)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+
+    # 3. Fallback common string patterns
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%d", "%a, %d %b %Y %H:%M:%S"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+
+    return None
+
+def load_opml(path_or_url, context=None):
+    """Loads OPML XML content from a local file path or a HTTP(S) URL."""
+    if path_or_url.startswith(('http://', 'https://')):
+        req = urllib.request.Request(
+            path_or_url,
+            headers={'User-Agent': USER_AGENT}
+        )
+        with urllib.request.urlopen(req, timeout=15, context=context) as response:
+            return response.read()
+    else:
+        with open(path_or_url, 'rb') as f:
+            return f.read()
+
+def parse_opml(opml_content):
+    """Parses OPML XML content and extracts outline items that specify a feed URL."""
+    root = ET.fromstring(opml_content)
+    feeds = []
+    # Find all outline elements recursively
+    for outline in root.findall('.//outline'):
+        xml_url = outline.attrib.get('xmlUrl')
+        if xml_url:
+            title = outline.attrib.get('title') or outline.attrib.get('text') or 'Untitled Feed'
+            html_url = outline.attrib.get('htmlUrl', '')
+            feeds.append({
+                'title': title.strip(),
+                'xml_url': xml_url.strip(),
+                'html_url': html_url.strip()
+            })
+    return feeds
+
+def merge_posts(cached_posts, new_posts):
+    """
+    Deduplicates and merges posts using GUID or permalink link.
+    Sorts the output chronologically (ascending).
+    """
+    merged = {}
+    
+    # Add previously cached posts first
+    for p in cached_posts:
+        key = p.get('guid') or p.get('link')
+        if key:
+            merged[key] = p
+
+    # Add/overwrite with newly parsed posts
+    for p in new_posts:
+        key = p.get('guid') or p.get('link')
+        if key:
+            merged[key] = p
+
+    # Sort merged posts by date ascending (invalid dates go to the bottom)
+    def get_sort_timestamp(post):
+        dt = parse_datetime(post.get('pub_date'))
+        return dt.timestamp() if dt else 0.0
+
+    return sorted(list(merged.values()), key=get_sort_timestamp)
+
+def fetch_single_feed(feed, cache_entry, context=None):
+    """
+    Fetches and parses a single feed using feedparser with HTTP Conditional GET.
+    Returns the updated cache entry representing this feed.
+    """
+    xml_url = feed['xml_url']
+    cached_etag = cache_entry.get('etag')
+    cached_last_modified = cache_entry.get('last_modified')
+    cached_posts = cache_entry.get('posts', [])
+
+    result = {
+        'title': feed['title'],
+        'html_url': feed['html_url'],
+        'etag': cached_etag,
+        'last_modified': cached_last_modified,
+        'last_checked': datetime.now(timezone.utc).isoformat(),
+        'status': cache_entry.get('status', 0),
+        'posts': cached_posts,
+        'updated_this_run': False,
+        'error_msg': None
+    }
+
+    try:
+        # Build custom request handlers to support SSL contexts
+        handlers = []
+        if context:
+            handlers.append(urllib.request.HTTPSHandler(context=context))
+
+        # Parse the feed with conditional headers and our User-Agent
+        parsed = feedparser.parse(
+            xml_url,
+            etag=cached_etag,
+            modified=cached_last_modified,
+            agent=USER_AGENT,
+            handlers=handlers
+        )
+
+        status = getattr(parsed, 'status', 200)
+        result['status'] = status
+        result['etag'] = getattr(parsed, 'etag', None)
+        result['last_modified'] = getattr(parsed, 'modified', None)
+
+        if status == 304:
+            # Not Modified: Keep cached values
+            pass
+        elif status in (200, 301, 302, 307):
+            result['updated_this_run'] = True
+            
+            # Map feedparser entries to cache posts format
+            new_posts = []
+            for entry in getattr(parsed, 'entries', []):
+                title = entry.get('title', 'Untitled Post').strip()
+                link = entry.get('link', '').strip()
+                guid = entry.get('id', link).strip()
+                
+                # Extract date from parsed struct_time first, fallback to raw string
+                pub_dt = None
+                parsed_time = entry.get('published_parsed') or entry.get('updated_parsed')
+                if parsed_time:
+                    try:
+                        pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
+                    except Exception:
+                        pass
+                
+                if not pub_dt:
+                    raw_date = entry.get('published') or entry.get('updated', '')
+                    pub_dt = parse_datetime(raw_date)
+
+                new_posts.append({
+                    'title': title,
+                    'link': link,
+                    'pub_date': pub_dt.isoformat() if pub_dt else '',
+                    'guid': guid
+                })
+
+            # Merge with existing cache database
+            result['posts'] = merge_posts(cached_posts, new_posts)
+        else:
+            result['error_msg'] = f"HTTP {status}"
+            if getattr(parsed, 'bozo_exception', None):
+                result['error_msg'] += f": {parsed.bozo_exception}"
+
+    except Exception as e:
+        result['status'] = -1
+        result['error_msg'] = str(e)
+
+    return xml_url, result
+
+def fetch_all_feeds(feeds, cache, concurrency=15, ignore_ssl=True):
+    """Fetches all feeds concurrently using ThreadPoolExecutor."""
+    context = None
+    if ignore_ssl:
+        context = ssl._create_unverified_context()
+
+    updated_cache = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+        # Submit tasks
+        future_to_url = {}
+        for feed in feeds:
+            url = feed['xml_url']
+            cache_entry = cache.get(url, {})
+            # Ensure feed info is synchronized
+            cache_entry['title'] = feed['title']
+            cache_entry['html_url'] = feed['html_url']
+            
+            future = executor.submit(fetch_single_feed, feed, cache_entry, context)
+            future_to_url[future] = url
+
+        # Process results as they complete
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                xml_url, result = future.result()
+                updated_cache[xml_url] = result
+                
+                title = result['title']
+                status = result['status']
+                if status == 304:
+                    print(f"  {title}: No updates since the last call")
+                elif status == 200:
+                    print(f"  {title}: Fetching modified feed (updated)")
+                elif result.get('error_msg'):
+                    print(f"  {title}: Error fetching - {result['error_msg']}")
+                else:
+                    print(f"  {title}: Fetched (HTTP {status})")
+            except Exception as e:
+                title = cache.get(url, {}).get('title', 'Unknown')
+                print(f"  {title}: Error fetching - Thread Error: {e}")
+                updated_cache[url] = {
+                    'title': title,
+                    'html_url': cache.get(url, {}).get('html_url', ''),
+                    'etag': cache.get(url, {}).get('etag'),
+                    'last_modified': cache.get(url, {}).get('last_modified'),
+                    'last_checked': datetime.now(timezone.utc).isoformat(),
+                    'status': -1,
+                    'posts': cache.get(url, {}).get('posts', []),
+                    'updated_this_run': False,
+                    'error_msg': f"Thread Error: {e}"
+                }
+    return updated_cache
+
+def generate_markdown(cache, since_dt):
+    """Generates a Markdown/GFM report detailing new posts since given date."""
+    lines = []
+    lines.append(f"# Blog Feed Activity Report")
+    lines.append(f"**Since Date:** `{since_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
+    lines.append(f"**Generated At:** `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`\n")
+    
+    # Summary Table
+    lines.append("## Feed Activity Summary\n")
+    lines.append("| Blog Title | Posts | Status | Last Checked |")
+    lines.append("| :--- | :---: | :---: | :--- |")
+    
+    blog_details = []
+    total_new_posts = 0
+    updated_blogs_count = 0
+    
+    # Process each feed in alphabetical order of titles
+    sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
+    for xml_url, info in sorted_feeds:
+        title = info['title']
+        html_url = info['html_url']
+        status_code = info['status']
+        last_checked = info.get('last_checked', 'Never')
+        error = info.get('error_msg')
+        
+        # Filter posts since date
+        new_posts = []
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= since_dt:
+                new_posts.append(post)
+                
+        post_count = len(new_posts)
+        total_new_posts += post_count
+        if post_count > 0:
+            updated_blogs_count += 1
+
+        # Format status indicator
+        if error:
+            status_str = f"❌ Error ({status_code})"
+        elif status_code == 304:
+            status_str = "💤 304 Cached"
+        elif status_code == 200:
+            status_str = "✅ 200 Refreshed"
+        else:
+            status_str = f"❓ HTTP {status_code}"
+            
+        blog_link = f"[{title}]({html_url})" if html_url else title
+        lines.append(f"| {blog_link} | **{post_count}** | {status_str} | {last_checked[:19].replace('T', ' ')} |")
+        
+        if post_count > 0:
+            blog_details.append((title, html_url, new_posts))
+            
+    lines.append("")
+    lines.append(f"**Stats Summary:** Checked {len(cache)} feeds. **{updated_blogs_count}** had updates. Found **{total_new_posts}** new posts.\n")
+    
+    # Detailed posts list
+    if blog_details:
+        lines.append("## Detailed Updates\n")
+        for title, html_url, posts in blog_details:
+            blog_link = f"[{title}]({html_url})" if html_url else title
+            lines.append(f"### {blog_link} ({len(posts)} posts)")
+            for post in posts:
+                # Format local pub date
+                p_dt = parse_datetime(post.get('pub_date'))
+                date_str = p_dt.strftime('%b %d, %Y') if p_dt else 'Unknown Date'
+                lines.append(f"* [{post['title']}]({post['link']}) - *{date_str}*")
+            lines.append("")
+    else:
+        lines.append("No new posts published since the given date.")
+        
+    return "\n".join(lines)
+
+def generate_html(cache, since_dt):
+    """Generates a premium, highly-styled HTML report."""
+    total_new_posts = 0
+    updated_blogs_count = 0
+    
+    sorted_feeds = sorted(cache.items(), key=lambda x: x[1]['title'].lower())
+    table_rows = []
+    detail_blocks = []
+    
+    for xml_url, info in sorted_feeds:
+        title = info['title']
+        html_url = info['html_url']
+        status_code = info['status']
+        last_checked = info.get('last_checked', 'Never')
+        error = info.get('error_msg')
+        
+        # Filter posts
+        new_posts = []
+        for post in info.get('posts', []):
+            dt = parse_datetime(post.get('pub_date'))
+            if dt and dt >= since_dt:
+                new_posts.append(post)
+                
+        post_count = len(new_posts)
+        total_new_posts += post_count
+        if post_count > 0:
+            updated_blogs_count += 1
+            
+        # Status styling classes
+        if error:
+            status_class = "status-error"
+            status_text = f"Error ({status_code})"
+            status_title = error
+        elif status_code == 304:
+            status_class = "status-cached"
+            status_text = "304 Cached"
+            status_title = "No changes detected on server"
+        elif status_code == 200:
+            status_class = "status-refreshed"
+            status_text = "200 Refreshed"
+            status_title = "Feed refreshed and parsed successfully"
+        else:
+            status_class = "status-unknown"
+            status_text = f"HTTP {status_code}"
+            status_title = ""
+
+        # Prepare Table Row
+        blog_link_html = f'<a href="{html_url}" target="_blank" class="blog-link">{title}</a>' if html_url else title
+        badge_class = "badge-update" if post_count > 0 else "badge-none"
+        checked_time = last_checked[:19].replace('T', ' ')
+        
+        row_id = f"row-{hash(xml_url) & 0xffffffff}"
+        
+        table_rows.append(f"""
+        <tr data-posts-count="{post_count}" data-title="{title.lower()}">
+            <td>{blog_link_html}</td>
+            <td><span class="badge {badge_class}">{post_count} posts</span></td>
+            <td><span class="status-indicator {status_class}" title="{status_title}">{status_text}</span></td>
+            <td class="text-muted">{checked_time}</td>
+        </tr>
+        """)
+        
+        # Prepare Detailed Blocks
+        if post_count > 0:
+            post_items_html = []
+            for post in new_posts:
+                p_dt = parse_datetime(post.get('pub_date'))
+                date_str = p_dt.strftime('%b %d, %Y') if p_dt else 'Unknown Date'
+                post_items_html.append(f"""
+                <li class="post-item">
+                    <a href="{post['link']}" target="_blank" class="post-title-link">{post['title']}</a>
+                    <span class="post-date">{date_str}</span>
+                </li>
+                """)
+            
+            detail_blocks.append(f"""
+            <div class="card detail-card" data-title="{title.lower()}">
+                <div class="card-header">
+                    <h3 class="blog-title">
+                        <a href="{html_url}" target="_blank">{title}</a>
+                        <span class="count-badge">{post_count} updates</span>
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <ul class="posts-list">
+                        {"".join(post_items_html)}
+                    </ul>
+                </div>
+            </div>
+            """)
+
+    # Statistics Cards calculation
+    total_feeds = len(cache)
+    since_str = since_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+    generated_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+    # Load HTML Template from file
+    template_path = os.path.join(os.path.dirname(__file__), "report_template.html")
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+    except Exception as e:
+        print(f"Error loading HTML template '{template_path}': {e}. Returning error fallback.", file=sys.stderr)
+        return f"<html><body><h1>Error loading template: {e}</h1></body></html>"
+
+    # Do token replacements
+    html_content = html_content.replace("{{since_str}}", since_str)
+    html_content = html_content.replace("{{generated_str}}", generated_str)
+    html_content = html_content.replace("{{total_feeds}}", str(total_feeds))
+    html_content = html_content.replace("{{updated_blogs_count}}", str(updated_blogs_count))
+    html_content = html_content.replace("{{total_new_posts}}", str(total_new_posts))
+    html_content = html_content.replace("{{table_rows}}", "".join(table_rows))
+    
+    details_html = "".join(detail_blocks) if detail_blocks else '<div class="card no-data-msg">No updates found for this time period.</div>'
+    html_content = html_content.replace("{{detail_blocks}}", details_html)
+
+    return html_content
+
+def main():
+    parser = argparse.ArgumentParser(description="Blog Feed Activity Tracker")
+    parser.add_argument("--opml", default=DEFAULT_OPML, help="Path or URL to OPML file (default: blog-fetcher/tests.opml)")
+    parser.add_argument("--since", help="Filter posts starting from date YYYY-MM-DD (default: 1st of current month)")
+    parser.add_argument("--format", choices=["markdown", "html"], default="markdown", help="Output format (default: markdown)")
+    parser.add_argument("--output", help="File to write report to (if not specified, no report is generated)")
+    parser.add_argument("--cache", default=DEFAULT_CACHE, help="Path to cache file (default: blog-fetcher/feed_cache.json)")
+    parser.add_argument("--exclude", help="Path to exclusion file containing URLs to ignore, one per line (default: blog-fetcher/exclude.yaml)")
+    parser.add_argument("--concurrency", type=int, default=15, help="Number of concurrent workers (default: 15)")
+    parser.add_argument("--ignore-ssl-errors", action="store_true", default=True, help="Ignore SSL validation errors (default: True)")
+
+    args = parser.parse_args()
+
+    # Determine since date
+    if args.since:
+        try:
+            since_dt = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            print(f"Error: Invalid date format for --since: '{args.since}'. Use YYYY-MM-DD.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Default to 1st of current month
+        today = datetime.now(timezone.utc)
+        since_dt = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+
+    # Load OPML
+    print(f"Loading OPML from: {args.opml}")
+    ssl_context = ssl._create_unverified_context() if args.ignore_ssl_errors else None
+    try:
+        opml_bytes = load_opml(args.opml, ssl_context)
+    except Exception as e:
+        print(f"Error loading OPML: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse OPML
+    try:
+        feeds = parse_opml(opml_bytes)
+        print(f"Extracted {len(feeds)} feeds from OPML.")
+    except Exception as e:
+        print(f"Error parsing OPML: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load Exclusions
+    exclude_urls = set()
+    exclude_file = args.exclude
+    if not exclude_file and os.path.exists(DEFAULT_EXCLUDE):
+        exclude_file = DEFAULT_EXCLUDE
+
+    if exclude_file and os.path.exists(exclude_file):
+        try:
+            with open(exclude_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+                if data and isinstance(data, dict):
+                    exclude_list = data.get('exclude') or data.get('exclusions') or []
+                    if isinstance(exclude_list, list):
+                        for item in exclude_list:
+                            if isinstance(item, str):
+                                exclude_urls.add(item.strip())
+            print(f"Loaded {len(exclude_urls)} exclusions from: {exclude_file}")
+        except Exception as e:
+            print(f"Warning: Failed to load exclusions from '{exclude_file}': {e}", file=sys.stderr)
+
+    # Filter feeds based on exclusions
+    filtered_feeds = [f for f in feeds if f['xml_url'] not in exclude_urls]
+    excluded_count = len(feeds) - len(filtered_feeds)
+    if excluded_count > 0:
+        print(f"Excluded {excluded_count} feeds based on the exclusion configuration.")
+    feeds = filtered_feeds
+
+    if not feeds:
+        print("No feeds found to crawl.", file=sys.stderr)
+        sys.exit(0)
+
+    # Load Cache
+    cache = {}
+    if os.path.exists(args.cache):
+        try:
+            with open(args.cache, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            print(f"Loaded existing cache database containing {len(cache)} entries.")
+        except Exception as e:
+            print(f"Warning: Failed to load cache file, starting fresh. Reason: {e}", file=sys.stderr)
+
+    # Log new feeds count
+    new_feeds = [f for f in feeds if f['xml_url'] not in cache]
+    print(f"Found {len(new_feeds)} new feeds in OPML since the last cache run.")
+
+    # Log removed feeds count if any
+    opml_urls = {f['xml_url'] for f in feeds}
+    removed_feeds = [url for url in cache if url not in opml_urls]
+    if removed_feeds:
+        print(f"Note: {len(removed_feeds)} feeds have been removed from the OPML since the last cache run.")
+
+    # Fetch feeds concurrently
+    print(f"Fetching feeds (concurrency={args.concurrency})...")
+    updated_cache = fetch_all_feeds(feeds, cache, concurrency=args.concurrency, ignore_ssl=args.ignore_ssl_errors)
+
+    # Save Cache
+    try:
+        with open(args.cache, "w", encoding="utf-8") as f:
+            json.dump(updated_cache, f, indent=2, ensure_ascii=False)
+        print(f"Updated cache written back to: {args.cache}")
+    except Exception as e:
+        print(f"Error writing to cache file: {e}", file=sys.stderr)
+
+    # Generate and Output Report (only if output file is specified)
+    if args.output:
+        if args.format == "markdown":
+            report_content = generate_markdown(updated_cache, since_dt)
+        else:
+            report_content = generate_html(updated_cache, since_dt)
+
+        try:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(report_content)
+            print(f"Report successfully saved to: {args.output}")
+        except Exception as e:
+            print(f"Error writing report: {e}", file=sys.stderr)
+            sys.exit(1)
+
+if __name__ == "__main__":
+    main()

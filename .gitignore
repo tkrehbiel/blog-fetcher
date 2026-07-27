@@ -1,0 +1,11 @@
+feed_cache.json
+report.html
+report.md
+*.html
+*.md
+*.opml
+exclude.yaml
+blaugust2026_cache.json
+test_cache.json
+!README.md
+!Tests.opml
