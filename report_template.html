@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog Feed Activity Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #0f172a;
+            --bg-surface: #1e293b;
+            --bg-card: #1e293b90;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --primary: #8b5cf6;
+            --primary-glow: #8b5cf640;
+            --secondary: #6366f1;
+            --border: #334155;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --glass-blur: backdrop-filter: blur(12px);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            line-height: 1.5;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 2.5rem;
+            text-align: center;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 2.75rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #a78bfa, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .metadata-bar {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.5rem;
+        }
+
+        .metadata-bar span strong {
+            color: var(--text-main);
+        }
+
+        /* Stat cards layout */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: #475569;
+        }
+
+        .stat-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .stat-num {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 0.5rem 0;
+            text-shadow: 0 0 20px var(--primary-glow);
+        }
+        
+        .stat-num.highlight-green { color: var(--success); }
+        .stat-num.highlight-purple { color: var(--primary); }
+        .stat-num.highlight-indigo { color: var(--secondary); }
+
+        .stat-label {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* Filters */
+        .controls-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .search-wrapper {
+            position: relative;
+            flex-grow: 1;
+            max-width: 400px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 0.75rem 1rem 0.75rem 2.5rem;
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 0.85rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+            width: 16px;
+            height: 16px;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background-color: var(--bg-surface);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background-color: #334155;
+            color: var(--text-main);
+        }
+
+        .btn.active {
+            background-color: var(--primary);
+            border-color: var(--primary);
+            color: white;
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        /* Table & Lists layout */
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-main);
+        }
+
+        .table-card {
+            padding: 0;
+            overflow: hidden;
+            margin-bottom: 3rem;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background-color: #0f172a50;
+        }
+
+        tbody tr {
+            transition: background-color 0.15s ease;
+        }
+
+        tbody tr:hover {
+            background-color: #33415540;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .blog-link {
+            color: var(--text-main);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1.05rem;
+            transition: color 0.15s;
+        }
+
+        .blog-link:hover {
+            color: var(--primary);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .badge-update {
+            background-color: #8b5cf620;
+            color: #c084fc;
+            border: 1px solid #c084fc40;
+        }
+
+        .badge-none {
+            background-color: #47556920;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+        }
+
+        .status-refreshed { background-color: #10b98120; color: #34d399; }
+        .status-cached { background-color: #3b82f620; color: #60a5fa; }
+        .status-error { background-color: #ef444420; color: #f87171; }
+        .status-unknown { background-color: #6b728020; color: #9ca3af; }
+
+        /* Detailed updates */
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        .detail-card .card-header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .blog-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1.25rem;
+        }
+
+        .blog-title a {
+            color: var(--text-main);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        .blog-title a:hover {
+            color: var(--primary);
+        }
+
+        .count-badge {
+            font-size: 0.8rem;
+            background-color: var(--primary);
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .posts-list {
+            list-style: none;
+        }
+
+        .post-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 0;
+            border-bottom: 1px dotted var(--border);
+        }
+
+        .post-item:last-child {
+            border-bottom: none;
+        }
+
+        .post-title-link {
+            color: #cbd5e1;
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 400;
+            transition: color 0.15s, padding-left 0.15s;
+            max-width: 75%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .post-title-link:hover {
+            color: var(--primary);
+            padding-left: 4px;
+        }
+
+        .post-date {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .no-data-msg {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Blog Feed Activity Report</h1>
+            <div class="metadata-bar">
+                <span>Since: <strong>{{since_str}}</strong></span>
+                <span>Generated: <strong>{{generated_str}}</strong></span>
+            </div>
+        </header>
+
+        <section class="stats-grid">
+            <div class="card stat-card">
+                <span class="stat-label">Blogs Crawled</span>
+                <span class="stat-num highlight-purple">{{total_feeds}}</span>
+            </div>
+            <div class="card stat-card">
+                <span class="stat-label">Blogs with Updates</span>
+                <span class="stat-num highlight-indigo">{{updated_blogs_count}}</span>
+            </div>
+            <div class="card stat-card">
+                <span class="stat-label">Total New Posts</span>
+                <span class="stat-num highlight-green">{{total_new_posts}}</span>
+            </div>
+        </section>
+
+        <div class="controls-row">
+            <div class="search-wrapper">
+                <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search blogs...">
+            </div>
+            <div class="filter-buttons">
+                <button class="btn active" id="btnAll">All Blogs</button>
+                <button class="btn" id="btnUpdated">Updated Only</button>
+            </div>
+        </div>
+
+        <section class="card table-card">
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Blog</th>
+                            <th>New Posts</th>
+                            <th>Fetch Status</th>
+                            <th>Last Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        {{table_rows}}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="section-title-wrapper">
+            <h2 class="section-title">
+                Detailed Feed Updates
+            </h2>
+        </section>
+
+        <section class="details-grid" id="detailsGrid">
+            {{detail_blocks}}
+        </section>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const btnAll = document.getElementById('btnAll');
+        const btnUpdated = document.getElementById('btnUpdated');
+        const tableBody = document.getElementById('tableBody');
+        const detailsGrid = document.getElementById('detailsGrid');
+
+        let filterMode = 'all'; // 'all' or 'updated'
+
+        function updateFilters() {
+            const query = searchInput.value.toLowerCase().trim();
+            const rows = tableBody.getElementsByTagName('tr');
+            const cards = detailsGrid.getElementsByClassName('detail-card');
+            
+            // Filter Table Rows
+            for (let row of rows) {
+                const title = row.getAttribute('data-title');
+                const count = parseInt(row.getAttribute('data-posts-count'), 10);
+                
+                const matchesSearch = title.includes(query);
+                const matchesFilter = filterMode === 'all' || count > 0;
+                
+                if (matchesSearch && matchesFilter) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            }
+
+            // Filter Detail Cards
+            let visibleCards = 0;
+            for (let card of cards) {
+                const title = card.getAttribute('data-title');
+                const matchesSearch = title.includes(query);
+                
+                if (matchesSearch) {
+                    card.style.display = '';
+                    visibleCards++;
+                } else {
+                    card.style.display = 'none';
+                }
+            }
+            
+            // Handle no detailed updates visible case
+            const noDataMsg = detailsGrid.querySelector('.no-data-msg');
+            if (cards.length > 0) {
+                if (visibleCards === 0) {
+                    if (!noDataMsg) {
+                        const msg = document.createElement('div');
+                        msg.className = 'card no-data-msg';
+                        msg.textContent = 'No updates match your search.';
+                        detailsGrid.appendChild(msg);
+                    } else {
+                        noDataMsg.textContent = 'No updates match your search.';
+                        noDataMsg.style.display = '';
+                    }
+                } else if (noDataMsg) {
+                    noDataMsg.style.display = 'none';
+                }
+            }
+        }
+
+        searchInput.addEventListener('input', updateFilters);
+
+        btnAll.addEventListener('click', () => {
+            btnAll.classList.add('active');
+            btnUpdated.classList.remove('active');
+            filterMode = 'all';
+            updateFilters();
+        });
+
+        btnUpdated.addEventListener('click', () => {
+            btnUpdated.classList.add('active');
+            btnAll.classList.remove('active');
+            filterMode = 'updated';
+            updateFilters();
+        });
+    </script>
+</body>
+</html>

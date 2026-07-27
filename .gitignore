@@ -8,3 +8,4 @@ exclude.yaml
 test_cache.json
 !README.md
 !tests.opml
+!report_template.html
