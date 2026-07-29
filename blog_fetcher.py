@@ -303,6 +303,58 @@ def fetch_all_feeds(feeds, cache, concurrency=15, ignore_ssl=True):
                 }
     return updated_cache
 
+def classify_error(status_code, error_msg):
+    """
+    Classifies a feed fetch/parse error to provide a human-friendly category and action.
+    Returns a dict with 'category' and 'action'.
+    """
+    if not error_msg and status_code in (200, 304):
+        return None
+
+    category = "Unknown Failure"
+    action = "Verify the feed URL and server logs"
+
+    # Check HTTP status code errors
+    if status_code != -1:
+        if status_code == 403:
+            category = "HTTP 403 Forbidden"
+            action = "Access denied. Check if request is blocked by Cloudflare or requires auth"
+        elif status_code == 404:
+            category = "HTTP 404 Not Found"
+            action = "Feed path not found. Verify the crawl URL"
+        elif status_code in (500, 502, 503, 504):
+            category = f"HTTP {status_code} Server Error"
+            action = "Remote server experienced an outage. Try again later"
+        else:
+            category = f"HTTP {status_code} Error"
+            action = f"Server returned error status {status_code}"
+    else:
+        # Inspect exception message
+        msg = str(error_msg).lower()
+        if "timed out" in msg or "timeout" in msg:
+            category = "Network Timeout"
+            action = "Request timed out after 10s. Remote host is too slow"
+        elif "nodename nor servname" in msg or "temporary failure in name resolution" in msg or "dns" in msg or "name resolution" in msg:
+            category = "DNS Resolution Error"
+            action = "Failed to resolve domain name. Check domain registration/validity"
+        elif "ssl" in msg or "certificate" in msg or "handshake" in msg:
+            category = "SSL Certificate Error"
+            action = "Failed secure SSL handshake. Verify website certificate configuration"
+        elif "connection refused" in msg or "connrefused" in msg:
+            category = "Connection Refused"
+            action = "Server rejected connection. Verify port configuration and firewalls"
+        elif "xml parsing error" in msg or "bozo" in msg:
+            category = "XML Parsing Error"
+            action = "Invalid XML structure. Verify RSS/Atom syntax validity"
+        elif "json" in msg or "decoding" in msg:
+            category = "JSON Parsing Error"
+            action = "Invalid JSON structure. Verify JSON Feed syntax validity"
+        else:
+            category = "Client/Crawl Error"
+            action = error_msg
+
+    return {"category": category, "action": action}
+
 def get_latest_post_timestamp(info):
     """Finds the timestamp of the latest post in the feed info (0.0 if none)."""
     latest_dt = None
@@ -369,7 +421,8 @@ def generate_markdown(cache, since_dt, last_run_dt=None):
 
         # Format status indicator
         if error:
-            status_str = f"❌ Error ({status_code})"
+            diag = classify_error(status_code, error)
+            status_str = f"❌ Error ({status_code})<br><small>*{diag['category']}*: {diag['action']}</small>"
         elif status_code == 304:
             status_str = "💤 304 Cached"
         elif status_code == 200:
@@ -467,10 +520,13 @@ def generate_html(cache, since_dt, last_run_dt=None):
             updated_today_count += 1
             
         # Status styling classes
+        status_detail_html = ""
         if error:
             status_class = "status-error"
             status_text = f"Error ({status_code})"
             status_title = error
+            diag = classify_error(status_code, error)
+            status_detail_html = f'<div class="error-action-detail"><strong>{diag["category"]}</strong>: {diag["action"]}</div>'
         elif status_code == 304:
             status_class = "status-cached"
             status_text = "304 Cached"
@@ -521,7 +577,7 @@ def generate_html(cache, since_dt, last_run_dt=None):
         <tr data-posts-count="{post_count}" data-title="{title.lower()}">
             <td>{blog_link_html}</td>
             <td><span class="badge {badge_class}">{post_count} posts</span>{new_badge_html}</td>
-            <td><span class="status-indicator {status_class}" title="{status_title}">{status_text}</span></td>
+            <td><span class="status-indicator {status_class}" title="{status_title}">{status_text}</span>{status_detail_html}</td>
             <td class="text-muted">{last_update_str}</td>
         </tr>
         """)
