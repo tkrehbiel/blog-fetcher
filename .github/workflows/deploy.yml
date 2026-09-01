@@ -3,8 +3,6 @@ name: Deploy Static Blog Tracker to Pages
 on:
   push:
     branches: ["main"]
-  schedule:
-    - cron: '0 */3 * * *'  # Run every 3 hours to fetch updates
   workflow_dispatch:      # Allow manual runs
 
 permissions:
